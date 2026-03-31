@@ -169,6 +169,7 @@ class Evaluator:
             sample: str,
             island_id: int | None,
             version_generated: int | None,
+            thought: str | None = None,
             **kwargs
     ) -> EvalResult:
         """Compiles the sample into a program and executes it on test inputs.
@@ -177,6 +178,8 @@ class Evaluator:
         """
         new_function, program = _sample_to_program(
             sample, version_generated, self._template, self._function_to_evolve)
+        if thought is not None:
+            new_function.thought = thought
         scores_per_test = {}
         collected_errors: list[str] = []
 

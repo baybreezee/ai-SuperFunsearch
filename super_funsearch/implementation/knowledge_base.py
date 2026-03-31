@@ -64,11 +64,13 @@ class KnowledgeBase:
 
     def _init_embedding_model(self):
         try:
+            import torch
             from sentence_transformers import SentenceTransformer
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
             self._embedding_model = SentenceTransformer(
-                self._config.embedding_model)
-            logging.info("Loaded embedding model: %s",
-                         self._config.embedding_model)
+                self._config.embedding_model, device=device)
+            logging.info("Loaded embedding model: %s (device=%s)",
+                         self._config.embedding_model, device)
         except ImportError:
             logging.warning(
                 "sentence-transformers not installed. "
