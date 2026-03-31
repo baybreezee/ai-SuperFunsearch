@@ -1,0 +1,7 @@
+numpy
+absl-py
+scipy
+torch
+dotenv
+sentence-transformers 
+python-dotenv
