@@ -1,0 +1,9 @@
+numpy
+scipy
+absl-py
+torch
+tensorboard
+tensorboardX
+numba
+python-dotenv
+sentence-transformers

@@ -1,0 +1,239 @@
+{
+  "L1_Meta_Thoughts": [
+    {
+      "meta_id": "META_001",
+      "name": "历史与动量 (Memory & Momentum)",
+      "core_philosophy": "打破马尔可夫性。引入对历史状态的记忆，用过去的经验来修正当前的决策权重。",
+      "applicable_symptoms": [
+        "当前贪心策略导致后期无路可走",
+        "算法在某个局部反复震荡",
+        "每次都做出相同的错误选择，缺乏自适应性"
+      ]
+    },
+    {
+      "meta_id": "META_002",
+      "name": "懒惰与延迟决策 (Lazy Evaluation & Look-ahead)",
+      "core_philosophy": "不到万不得已不做不可逆的决定。先模拟、评估，再落子。",
+      "applicable_symptoms": [
+        "过于贪婪地填满当前空间，导致后续缺乏连续大空间",
+        "每次计算全部状态导致运行严重超时"
+      ]
+    },
+    {
+      "meta_id": "META_003",
+      "name": "分而治之与层次化 (Divide & Conquer / Hierarchical Decomposition)",
+      "core_philosophy": "将复杂问题分解为独立的子问题，分别求解后合并结果。通过层次化处理降低决策空间的维度。",
+      "applicable_symptoms": [
+        "问题规模增大时性能急剧下降",
+        "所有物品混在一起处理导致策略混乱",
+        "无法区分不同类型或尺寸的物品进行差异化处理"
+      ]
+    },
+    {
+      "meta_id": "META_004",
+      "name": "退火与宽容 (Annealing & Tolerance)",
+      "core_philosophy": "在搜索初期容忍短期的劣解以跳出局部最优，随着进程推进逐渐收紧约束趋向最优。",
+      "applicable_symptoms": [
+        "算法陷入局部最优无法跳出",
+        "每一步都选最优但整体结果很差",
+        "策略过于保守缺乏探索性"
+      ]
+    },
+    {
+      "meta_id": "META_005",
+      "name": "对称性与规范化 (Symmetry Breaking & Normalization)",
+      "core_philosophy": "识别并消除问题中的等价状态，减少冗余搜索。通过归一化将不同量纲的特征映射到可比较的尺度。",
+      "applicable_symptoms": [
+        "不同输入产生相同质量的输出但走了不同路径",
+        "特征值量纲不统一导致评分公式被单一因素主导",
+        "大量等价方案浪费了搜索预算"
+      ]
+    },
+    {
+      "meta_id": "META_006",
+      "name": "多目标权衡与帕累托思维 (Multi-Objective Trade-off)",
+      "core_philosophy": "在多个相互矛盾的目标之间寻找平衡，而不是只优化单一指标。",
+      "applicable_symptoms": [
+        "优化一个指标导致另一个指标严重恶化",
+        "算法只考虑当前利用率忽略了未来的灵活性",
+        "空间利用率高但箱子数量反而增多"
+      ]
+    }
+  ],
+
+  "L2_Cross_Domain_Patterns": [
+    {
+      "pattern_id": "PATT_001",
+      "linked_meta_id": "META_001",
+      "domain": "Deep Learning",
+      "name": "动量优化器 (Momentum Optimizer)",
+      "mechanism": "记录上一次梯度的方向，同方向持续下降则加速，方向改变则减速。",
+      "applicable_symptoms": [
+        "算法在某个局部反复震荡",
+        "缺乏对历史决策的记忆"
+      ],
+      "generator_prompt_hint": "在启发式评分公式中加入历史记录数组。例如：priority = greedy_score - penalty_history[item_type]。"
+    },
+    {
+      "pattern_id": "PATT_002",
+      "linked_meta_id": "META_002",
+      "domain": "Operating System",
+      "name": "写时复制 / 按需计算 (Copy-on-Write / Lazy Tag)",
+      "mechanism": "先用 Tag 标记需要修改的区域，直到真正有请求访问时才执行计算。",
+      "applicable_symptoms": [
+        "过于贪婪地填满当前空间，导致后续缺乏连续大空间",
+        "双层循环每次更新所有状态导致超时"
+      ],
+      "generator_prompt_hint": "不要每次更新所有箱子的剩余空间。引入 Lazy 机制，只在当前箱子塞不下时再查找下一个。"
+    },
+    {
+      "pattern_id": "PATT_003",
+      "linked_meta_id": "META_003",
+      "domain": "Computer Science",
+      "name": "桶排序 / 分组处理 (Bucket Sort / Grouping)",
+      "mechanism": "按照特征将元素分配到不同的桶中，在每个桶内独立处理后合并结果。",
+      "applicable_symptoms": [
+        "所有物品混在一起处理导致策略混乱",
+        "无法区分大中小物品进行差异化处理"
+      ],
+      "generator_prompt_hint": "将物品按尺寸分为大件(>0.5)、中件(0.25-0.5)、小件(<0.25)三类，对不同类别采用不同的放置策略。"
+    },
+    {
+      "pattern_id": "PATT_004",
+      "linked_meta_id": "META_004",
+      "domain": "Physics / Optimization",
+      "name": "模拟退火 (Simulated Annealing)",
+      "mechanism": "以一定概率接受劣解，概率随温度参数降低而减小。初期大范围探索，后期精细收敛。",
+      "applicable_symptoms": [
+        "算法陷入局部最优无法跳出",
+        "每一步都选最优但整体结果很差"
+      ],
+      "generator_prompt_hint": "在priority函数中引入随机扰动项：priority = base_score + temperature * random_noise，其中 temperature 随已处理物品比例递减。"
+    },
+    {
+      "pattern_id": "PATT_005",
+      "linked_meta_id": "META_005",
+      "domain": "Machine Learning",
+      "name": "特征归一化 (Feature Normalization)",
+      "mechanism": "将不同量纲的特征缩放到相同区间（如[0,1]），确保没有单一特征主导决策。",
+      "applicable_symptoms": [
+        "评分公式被单一因素主导",
+        "特征值量纲不统一导致小数值因素被淹没"
+      ],
+      "generator_prompt_hint": "将 item/bins 和 (bins-item)/capacity 等不同维度的特征都归一化到 [0,1] 区间后再做加权组合。"
+    },
+    {
+      "pattern_id": "PATT_006",
+      "linked_meta_id": "META_006",
+      "domain": "Game Theory",
+      "name": "纳什均衡 / 极小极大 (Nash Equilibrium / Minimax)",
+      "mechanism": "在做决策时同时考虑最好情况和最坏情况，选择最坏情况下损失最小的策略。",
+      "applicable_symptoms": [
+        "优化一个指标导致另一个指标严重恶化",
+        "算法只考虑当前利用率忽略了未来的灵活性"
+      ],
+      "generator_prompt_hint": "计算priority时同时评估当前箱子填充率和剩余空间对后续物品的适配度，取两者的加权调和平均。"
+    },
+    {
+      "pattern_id": "PATT_007",
+      "linked_meta_id": "META_001",
+      "domain": "Reinforcement Learning",
+      "name": "衰减奖惩 (Decaying Reward/Penalty)",
+      "mechanism": "对历史事件赋予随时间衰减的奖励或惩罚，近期事件权重高，远期事件权重低。",
+      "applicable_symptoms": [
+        "当前贪心策略导致后期无路可走",
+        "每次都做出相同的错误选择"
+      ],
+      "generator_prompt_hint": "维护一个衰减惩罚数组 penalty[i] *= decay_rate，每次浪费空间时增加对应箱子尺寸区间的惩罚值。"
+    },
+    {
+      "pattern_id": "PATT_008",
+      "linked_meta_id": "META_002",
+      "domain": "Chess / Go AI",
+      "name": "前瞻搜索 (Look-ahead Search)",
+      "mechanism": "在做决策前，模拟接下来 K 步的结果，选择 K 步后局面最优的当前动作。",
+      "applicable_symptoms": [
+        "算法只看当前一步不考虑后果",
+        "短视策略导致长期效果差"
+      ],
+      "generator_prompt_hint": "在选择箱子前，模拟将当前物品放入每个候选箱子后，接下来 2-3 个物品的最优放置情况，选择整体浪费最少的方案。"
+    }
+  ],
+
+  "L3_Problem_Domains": [
+    {
+      "domain_id": "PROB_BIN_PACKING_1D",
+      "name": "一维装箱问题 (1D Bin Packing)",
+      "description": "将一组一维物品放入容量固定的最少数量的箱子中。在线版本要求物品按给定顺序依次处理，不可回退。",
+      "base_constraints": [
+        "物品大小不能超过箱子容量",
+        "物品不可分割",
+        "在线场景下物品必须按顺序处理，不可重排"
+      ],
+      "evaluation_metric": "使用的箱子总数最少（分数为负的平均箱子数）"
+    }
+  ],
+
+  "L4_Specific_Tactics": [
+    {
+      "tactic_id": "TAC_BIN_001",
+      "linked_domain_id": "PROB_BIN_PACKING_1D",
+      "linked_pattern_ids": ["PATT_002"],
+      "name": "延迟大件匹配 (Deferred Large Item Assignment)",
+      "applicable_symptoms": [
+        "大件物品最后无法放入",
+        "小件物品把箱子分割得很碎"
+      ],
+      "tactic_description": "遇到接近箱子容量一半的中大件物品时，延迟决策。先尝试将它们两两配对，或者与特小件物品打包成虚拟 Super Item，然后再寻找箱子放入。",
+      "provenance": {"score_improvement": "Seed", "author": "Human_Expert"}
+    },
+    {
+      "tactic_id": "TAC_BIN_002",
+      "linked_domain_id": "PROB_BIN_PACKING_1D",
+      "linked_pattern_ids": ["PATT_003"],
+      "name": "尺寸分级差异化策略 (Size-Tiered Differentiation)",
+      "applicable_symptoms": [
+        "所有物品用相同策略处理导致效率低",
+        "无法针对不同大小的物品做差异化决策"
+      ],
+      "tactic_description": "将物品按占容量的比例分为大件(>50%)、中件(25%-50%)、小件(<25%)。大件优先寻找能精确匹配剩余空间的箱子；中件寻找能两两互补的箱子；小件用于填充已有箱子的碎片空间。",
+      "provenance": {"score_improvement": "Seed", "author": "Human_Expert"}
+    },
+    {
+      "tactic_id": "TAC_BIN_003",
+      "linked_domain_id": "PROB_BIN_PACKING_1D",
+      "linked_pattern_ids": ["PATT_005"],
+      "name": "剩余空间匹配度评分 (Remaining-Space Fitness Scoring)",
+      "applicable_symptoms": [
+        "评分公式过于简单只看剩余空间大小",
+        "最佳匹配(Best Fit)策略仍有较大浪费"
+      ],
+      "tactic_description": "priority 不只看 bins-item 的绝对值，而是综合考虑：(1) 放入后剩余空间能否恰好容纳常见尺寸的物品 (2) 当前箱子已有的填充率 (3) 放入后剩余空间的碎片化程度。用归一化加权公式组合这些因素。",
+      "provenance": {"score_improvement": "Seed", "author": "Human_Expert"}
+    },
+    {
+      "tactic_id": "TAC_BIN_004",
+      "linked_domain_id": "PROB_BIN_PACKING_1D",
+      "linked_pattern_ids": ["PATT_006"],
+      "name": "空间预留与弹性缓冲 (Space Reservation & Elastic Buffer)",
+      "applicable_symptoms": [
+        "前期过度填满箱子导致后期大件无处放置",
+        "贪心策略短视只看当前利用率"
+      ],
+      "tactic_description": "不要每次都追求把箱子填到最满。对部分箱子保留一定比例(如10%-20%)的弹性缓冲空间，专门用于后续可能出现的大件物品。随着剩余物品减少，逐步释放预留空间。",
+      "provenance": {"score_improvement": "Seed", "author": "Human_Expert"}
+    },
+    {
+      "tactic_id": "TAC_BIN_005",
+      "linked_domain_id": "PROB_BIN_PACKING_1D",
+      "linked_pattern_ids": ["PATT_004", "PATT_007"],
+      "name": "自适应惩罚项 (Adaptive Penalty Term)",
+      "applicable_symptoms": [
+        "算法在某些箱子尺寸区间反复犯同样的错误",
+        "空间浪费集中在特定范围的剩余容量"
+      ],
+      "tactic_description": "在 priority 公式中增加一个基于历史浪费统计的惩罚项。如果某个剩余空间区间(如0.2-0.3)经常无法被后续物品利用，则降低导致这类剩余空间的放置方案的优先级。惩罚值随时间衰减以适应物品分布的变化。",
+      "provenance": {"score_improvement": "Seed", "author": "Human_Expert"}
+    }
+  ]
+}
