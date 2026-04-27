@@ -29,9 +29,15 @@ import scipy
 
 from implementation import code_manipulation
 from implementation import config as config_lib
+from implementation import structure_analysis
 
 # RZ: I change the original code "tuple[float, ...]" to "Tuple[float, ...]"
 Signature = Tuple[float, ...]
+ClusterKey = tuple[Signature, str, bool]
+_PARENT_WEIGHT_CATASTROPHIC = 0.05
+_PARENT_WEIGHT_RISKY = 0.20
+_PARENT_WEIGHT_BF_SATURATED = 0.60
+_PARENT_WEIGHT_PROMISING_NON_BF = 1.25
 
 # RZ: the code is also incorrect
 # We should use typing.Mapping rather than abc.Mapping
@@ -67,6 +73,48 @@ def _get_signature(scores_per_test: ScoresPerTest) -> Signature:
     return tuple(scores_per_test[k] for k in sorted(scores_per_test.keys()))
 
 
+def _sampling_multiplier(
+        cluster: 'Cluster',
+        best_score: float,
+        search_policy: Any | None = None,
+) -> float:
+    """Parent-sampling multiplier for bounded diversity.
+
+    Bad structures are still stored in the island and remain visible to A3 via
+    logs/outcomes, but they should not reproduce as often as near-frontier
+    non-BF variants.  This multiplier is applied on top of score softmax by
+    adding ``temperature * log(multiplier)`` to the logits.
+    """
+    score = cluster.score
+    if not np.isfinite(score) or not np.isfinite(best_score):
+        return 1.0
+
+    scale = max(10.0, abs(best_score))
+    catastrophic_gap = max(100.0, 0.25 * scale)
+    close_gap = max(10.0, 0.05 * scale)
+
+    multiplier = 1.0
+    if score < best_score - catastrophic_gap:
+        multiplier *= _PARENT_WEIGHT_CATASTROPHIC
+    if 'loop' in cluster.structure_tag:
+        multiplier *= _PARENT_WEIGHT_RISKY
+    if cluster.bf_equivalent and score >= best_score - close_gap:
+        multiplier *= _PARENT_WEIGHT_BF_SATURATED
+    if (not cluster.bf_equivalent) and score >= best_score - close_gap:
+        multiplier *= _PARENT_WEIGHT_PROMISING_NON_BF
+    if search_policy is not None and hasattr(search_policy, 'parent_multiplier'):
+        try:
+            multiplier *= float(search_policy.parent_multiplier(
+                structure_tag=cluster.structure_tag,
+                bf_equivalent=cluster.bf_equivalent,
+                score=score,
+                best_score=best_score,
+            ))
+        except Exception as e:
+            logging.warning('[a4] parent multiplier ignored: %s', e)
+    return float(max(1e-12, multiplier))
+
+
 @dataclasses.dataclass(frozen=True)
 class Prompt:
     """A prompt produced by the ProgramsDatabase, to be sent to Samplers.
@@ -85,6 +133,11 @@ class Prompt:
     island_id: int
     thoughts: list[str] = dataclasses.field(default_factory=list)
     function_header: str = ''
+    # Sorted (worst -> best) parent functions, including their .body and
+    # .thought attributes. Needed by EoH-style multi-operator samplers that
+    # build prompts from paired (algorithm, code) tuples instead of from the
+    # already-assembled `code` string. Empty for the very first prompt.
+    parent_implementations: list = dataclasses.field(default_factory=list)
 
 
 class ProgramsDatabase:
@@ -115,14 +168,29 @@ class ProgramsDatabase:
                 [None] * config.num_islands)
 
         self._last_reset_time: float = time.time()
+        # NEW: counts successfully-registered samples since the last reset.
+        # Used when config.reset_period_samples > 0 (sample-based resets).
+        self._samples_since_last_reset: int = 0
 
-    def get_prompt(self) -> Prompt:
+    @property
+    def num_islands(self) -> int:
+        return len(self._islands)
+
+    def get_prompt(
+            self,
+            island_id: int | None = None,
+            search_policy: Any | None = None,
+    ) -> Prompt:
         """Returns a prompt containing implementations from one chosen island."""
-        island_id = np.random.randint(len(self._islands))
-        code, version_generated, thoughts, function_header = (
-            self._islands[island_id].get_prompt()
+        if island_id is None:
+            island_id = np.random.randint(len(self._islands))
+        else:
+            island_id = int(island_id) % len(self._islands)
+        code, version_generated, thoughts, function_header, parent_impls = (
+            self._islands[island_id].get_prompt(search_policy=search_policy)
         )
-        return Prompt(code, version_generated, island_id, thoughts, function_header)
+        return Prompt(code, version_generated, island_id, thoughts,
+                      function_header, parent_impls)
 
     def _register_program_in_island(
             self,
@@ -170,10 +238,30 @@ class ProgramsDatabase:
         else:
             self._register_program_in_island(program, island_id, scores_per_test, **kwargs)
 
-        # Check whether it is time to reset an island.
-        if time.time() - self._last_reset_time > self._config.reset_period:
-            self._last_reset_time = time.time()
-            self.reset_islands()
+        # Check whether it is time to reset an island. We support two modes:
+        #   1) sample-based (preferred for short runs): fires every
+        #      `reset_period_samples` registered programs.
+        #   2) time-based (original behaviour): fires every `reset_period`
+        #      wall-clock seconds. Only used when reset_period_samples == 0.
+        # Note: sample_0 (the seed registered with island_id=None at startup)
+        # registers across N islands and counts as N samples here, which is
+        # fine — the very first reset still fires after roughly N real LLM
+        # samples, not in the middle of init.
+        self._samples_since_last_reset += 1
+        period_samples = getattr(self._config, 'reset_period_samples', 0) or 0
+        if period_samples > 0:
+            if self._samples_since_last_reset >= period_samples:
+                self._samples_since_last_reset = 0
+                self._last_reset_time = time.time()
+                logging.info(
+                    'Sample-based reset firing (every %d samples).',
+                    period_samples)
+                self.reset_islands()
+        else:
+            if time.time() - self._last_reset_time > self._config.reset_period:
+                self._last_reset_time = time.time()
+                self._samples_since_last_reset = 0
+                self.reset_islands()
 
     def reset_islands(self) -> None:
         """Resets the weaker half of islands."""
@@ -216,7 +304,7 @@ class Island:
         self._cluster_sampling_temperature_period = (
             cluster_sampling_temperature_period)
 
-        self._clusters: dict[Signature, Cluster] = {}
+        self._clusters: dict[ClusterKey, Cluster] = {}
         self._num_programs: int = 0
 
     def register_program(
@@ -226,18 +314,29 @@ class Island:
     ) -> None:
         """Stores a program on this island, in its appropriate cluster."""
         signature = _get_signature(scores_per_test)
-        if signature not in self._clusters:
+        info = structure_analysis.analyze(program)
+        setattr(program, 'structure_tag', info.structure_tag)
+        setattr(program, 'bf_equivalent', info.bf_equivalent)
+        setattr(program, 'structure_summary', info.summary())
+        cluster_key: ClusterKey = (
+            signature, info.structure_tag, info.bf_equivalent)
+        if cluster_key not in self._clusters:
             score = _reduce_score(scores_per_test)
-            self._clusters[signature] = Cluster(score, program)
+            self._clusters[cluster_key] = Cluster(score, program, info)
         else:
-            self._clusters[signature].register_program(program)
+            self._clusters[cluster_key].register_program(program)
         self._num_programs += 1
 
-    def get_prompt(self) -> tuple[str, int, list[str], str]:
+    def get_prompt(
+            self,
+            search_policy: Any | None = None,
+    ) -> tuple[str, int, list[str], str,
+               list[code_manipulation.Function]]:
         """Constructs a prompt containing functions from this island.
 
         Returns:
-            (code, version_generated, thoughts, function_header)
+            (code, version_generated, thoughts, function_header,
+             parent_implementations)
         """
         signatures = list(self._clusters.keys())
         cluster_scores = np.array(
@@ -246,12 +345,48 @@ class Island:
         period = self._cluster_sampling_temperature_period
         temperature = self._cluster_sampling_temperature_init * (
                 1 - (self._num_programs % period) / period)
-        probabilities = _softmax(cluster_scores, temperature)
+        best_score = float(np.max(cluster_scores))
+        multipliers = np.array([
+            _sampling_multiplier(
+                self._clusters[signature], best_score, search_policy)
+            for signature in signatures
+        ], dtype=float)
+        adjusted_scores = (
+            cluster_scores + temperature * np.log(np.maximum(multipliers, 1e-12)))
+        probabilities = _softmax(adjusted_scores, temperature)
 
         functions_per_prompt = min(len(self._clusters), self._functions_per_prompt)
 
+        # If all programs collapse into one structure-aware cluster, still expose
+        # multiple implementations from that cluster.  This prevents EoH e1/e2
+        # from falling back to i1 solely because equal-score programs were
+        # stored together.
+        if len(signatures) == 1:
+            cluster = self._clusters[signatures[0]]
+            implementations = cluster.sample_programs(self._functions_per_prompt)
+            scores = [cluster.score] * len(implementations)
+            indices = np.argsort(scores)
+            sorted_implementations = [implementations[i] for i in indices]
+            version_generated = len(sorted_implementations) + 1
+            code, function_header = self._generate_prompt(sorted_implementations)
+            thoughts = [
+                impl.thought for impl in sorted_implementations
+                if impl.thought is not None
+            ]
+            return code, version_generated, thoughts, function_header, list(sorted_implementations)
+
+        nonzero_probs = int(np.count_nonzero(probabilities))
+        if nonzero_probs < functions_per_prompt:
+            # Very low temperatures can underflow all but the best cluster to
+            # exactly zero.  Sampling without replacement then crashes even
+            # though enough clusters exist.  Blend in a tiny uniform component
+            # so diversity sampling remains possible.
+            probabilities = probabilities + 1e-12
+            probabilities = probabilities / probabilities.sum()
+
         idx = np.random.choice(
-            len(signatures), size=functions_per_prompt, p=probabilities)
+            len(signatures), size=functions_per_prompt, p=probabilities,
+            replace=len(signatures) < functions_per_prompt)
         chosen_signatures = [signatures[i] for i in idx]
         implementations = []
         scores = []
@@ -269,7 +404,11 @@ class Island:
             impl.thought for impl in sorted_implementations
             if impl.thought is not None
         ]
-        return code, version_generated, thoughts, function_header
+        # Pass back deep-copied originals (with their .body and .thought intact).
+        # _generate_prompt rewrites names in-place via copy.deepcopy already, so
+        # the originals here are still untouched.
+        parent_impls = list(sorted_implementations)
+        return code, version_generated, thoughts, function_header, parent_impls
 
     def _generate_prompt(
             self,
@@ -313,15 +452,34 @@ class Island:
 class Cluster:
     """A cluster of programs on the same island and with the same Signature."""
 
-    def __init__(self, score: float, implementation: code_manipulation.Function):
+    def __init__(
+            self,
+            score: float,
+            implementation: code_manipulation.Function,
+            structure_info: structure_analysis.StructureInfo | None = None):
         self._score = score
         self._programs: list[code_manipulation.Function] = [implementation]
         self._lengths: list[int] = [len(str(implementation))]
+        self._structure_info = structure_info
 
     @property
     def score(self) -> float:
         """Reduced score of the signature that this cluster represents."""
         return self._score
+
+    @property
+    def structure_tag(self) -> str:
+        if self._structure_info is None:
+            return 'unknown'
+        return self._structure_info.structure_tag
+
+    @property
+    def bf_equivalent(self) -> bool:
+        return bool(self._structure_info and self._structure_info.bf_equivalent)
+
+    @property
+    def num_programs(self) -> int:
+        return len(self._programs)
 
     def register_program(self, program: code_manipulation.Function) -> None:
         """Adds `program` to the cluster."""
@@ -330,7 +488,15 @@ class Cluster:
 
     def sample_program(self) -> code_manipulation.Function:
         """Samples a program, giving higher probability to shorther programs."""
+        return self.sample_programs(1)[0]
+
+    def sample_programs(self, k: int) -> list[code_manipulation.Function]:
+        """Samples up to k programs, favouring shorter implementations."""
+        k = max(1, min(int(k), len(self._programs)))
         normalized_lengths = (np.array(self._lengths) - min(self._lengths)) / (
                 max(self._lengths) + 1e-6)
         probabilities = _softmax(-normalized_lengths, temperature=1.0)
-        return np.random.choice(self._programs, p=probabilities)
+        chosen = np.random.choice(
+            self._programs, size=k, p=probabilities,
+            replace=len(self._programs) < k)
+        return list(chosen)

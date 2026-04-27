@@ -39,6 +39,13 @@ class ProgramsDatabaseConfig:
     functions_per_prompt: int = 2
     num_islands: int = 10
     reset_period: int = 4 * 60 * 60
+    # NEW: when > 0, weak islands are reset every N successfully-registered
+    # samples instead of every `reset_period` seconds. Sample-based resets
+    # are deterministic w.r.t. budget, which matters for short runs (a 150-
+    # sample experiment can take 30min~3h depending on API latency, making
+    # time-based resets fire 0~5 times unpredictably). Set to 0 to keep the
+    # original time-based behaviour.
+    reset_period_samples: int = 0
     cluster_sampling_temperature_init: float = 0.1
     cluster_sampling_temperature_period: int = 30_000
 

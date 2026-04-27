@@ -1,0 +1,19 @@
+Below are two {func_name} functions for {problem_desc}
+{func_desc}
+
+You are provided with two code versions below, where the second version performs better than the first one.
+
+[Worse code]
+{worse_code}
+
+[Better code]
+{better_code}
+
+Respond with hints for designing better heuristics, in less than 30 words.
+
+Diagnostic step (do this first, silently):
+  1. If a "## Your past suggestions and their measured impact" section is present above, check whether your last suggestion FAILED or regressed; if so, refine it with a bounded rule, or pivot away from that failed family (do NOT repeat the failed hint verbatim).
+  2. Check whether the two codes share the SAME structural pattern — e.g. both compute one formula uniformly over all bins, both use only `bins - item`, both add a single fresh-bin penalty term. If yes, your hint should recommend a bounded non-Best-Fit perturbation around the tight-fit signal, such as piecewise exponents, small rank/tie-break bias, or bounded multiplicative weights. Do NOT recommend global balance / mean-target / variance-minimization / fragmentation-profile / per-bin simulation as the main signal unless recent outcomes explicitly improved.
+  3. Keep hints implementation-safe: prefer O(n) vectorized numpy scoring and avoid nested loops, full packing simulation, one-index return values, random/stochastic perturbations, and positive-residual primary scores.
+
+Hard rule: never copy code from the past-outcomes block into your hint.

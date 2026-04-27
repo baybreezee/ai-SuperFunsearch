@@ -81,6 +81,8 @@ def _trim_function_body(generated_code: str) -> str:
             tree = ast.parse(code)
         except SyntaxError as e:
             code = '\n'.join(code.splitlines()[:e.lineno - 1])
+            if not code or '\n' not in code:
+                return ''
 
     if not code:
         return ''
@@ -91,14 +93,76 @@ def _trim_function_body(generated_code: str) -> str:
     return '\n'.join(body_lines) + '\n\n'
 
 
+class InvalidSampleError(Exception):
+    """Raised when an LLM sample is structurally invalid and must be rejected
+    BEFORE running the sandbox (e.g. empty body, no return statement).
+
+    The sandbox is intentionally NOT consulted in this case, because numpy's
+    silent coercion of `None` (from a bodyless function) into a 0-d array makes
+    `np.argmax(None)` return `0` without raising — which historically caused
+    every empty sample to be registered with the same fake score (~-212.75)
+    and pollute every island in the database.
+    """
+
+
+def _validate_sample_body(body: str) -> None:
+    """Structural validation of an LLM-produced function body.
+
+    Rules (cheap, ast-based, no execution):
+      1. Body must be non-empty after trimming whitespace and comments.
+      2. Body must contain at least one top-level `return` statement.
+      3. Body must parse as valid Python when wrapped in a fake header.
+
+    Raises:
+        InvalidSampleError: if any rule is violated.
+    """
+    if not body or not body.strip():
+        raise InvalidSampleError('empty body after trimming LLM output')
+
+    wrapped = f'def _v():\n{body}'
+    try:
+        tree = ast.parse(wrapped)
+    except SyntaxError as e:
+        raise InvalidSampleError(f'syntax error in body: {e}') from e
+
+    func_node = tree.body[0]
+    assert isinstance(func_node, ast.FunctionDef)
+
+    has_return = any(
+        isinstance(n, ast.Return) and n.value is not None
+        for n in ast.walk(func_node)
+    )
+    if not has_return:
+        raise InvalidSampleError(
+            'body has no `return <expr>` statement; '
+            'an empty / docstring-only body would silently score the same '
+            'as a degenerate first-fit-style heuristic and pollute the islands'
+        )
+
+    non_trivial = [
+        n for n in func_node.body
+        if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))
+        and not isinstance(n, ast.Pass)
+    ]
+    if not non_trivial:
+        raise InvalidSampleError(
+            'body contains only docstring / pass / constant expressions'
+        )
+
+
 def _sample_to_program(
         generated_code: str,
         version_generated: int | None,
         template: code_manipulation.Program,
         function_to_evolve: str,
 ) -> tuple[code_manipulation.Function, str]:
-    """Returns the compiled generated function and the full runnable program."""
+    """Returns the compiled generated function and the full runnable program.
+
+    Raises:
+        InvalidSampleError: if the trimmed body fails structural validation.
+    """
     body = _trim_function_body(generated_code)
+    _validate_sample_body(body)
     if version_generated is not None:
         body = code_manipulation.rename_function_calls(
             code=body,
@@ -175,9 +239,44 @@ class Evaluator:
         """Compiles the sample into a program and executes it on test inputs.
 
         Returns an EvalResult with scores, error traces, and registration status.
+
+        If the sample fails *structural* validation (empty body, no return, etc.)
+        the sandbox is NEVER invoked and a non-registered EvalResult is returned
+        with `error_trace` set. This is critical: numpy silently coerces a
+        bodyless function's `None` return into a 0-d array, so without this
+        guard every garbage sample would score ≈ -212.75 and pollute the
+        evolutionary database.
         """
-        new_function, program = _sample_to_program(
-            sample, version_generated, self._template, self._function_to_evolve)
+        try:
+            new_function, program = _sample_to_program(
+                sample, version_generated,
+                self._template, self._function_to_evolve)
+        except InvalidSampleError as e:
+            invalid_function = copy.deepcopy(
+                self._template.get_function(self._function_to_evolve))
+            invalid_function.body = ''
+            if thought is not None:
+                invalid_function.thought = thought
+            err_trace = f'InvalidSampleError: {e}'
+            profiler: profile.Profiler = kwargs.get('profiler', None)
+            if profiler is not None:
+                global_sample_nums = kwargs.get('global_sample_nums', None)
+                sample_time = kwargs.get('sample_time', None)
+                invalid_function.global_sample_nums = global_sample_nums
+                invalid_function.score = None
+                invalid_function.sample_time = sample_time
+                invalid_function.evaluate_time = 0.0
+                profiler.register_function(invalid_function)
+            return EvalResult(
+                function=invalid_function,
+                program='',
+                scores_per_test={},
+                reduced_score=None,
+                error_trace=err_trace,
+                is_valid=False,
+                registered=False,
+            )
+
         if thought is not None:
             new_function.thought = thought
         scores_per_test = {}

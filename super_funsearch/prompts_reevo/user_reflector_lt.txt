@@ -1,0 +1,14 @@
+Below is your prior long-term reflection on designing heuristics for {problem_desc}
+{prior_reflection}
+
+Below are some newly gained insights.
+{new_reflection}
+
+Write constructive hints for designing better heuristics, based on prior reflections and new insights, in less than 60 words.
+
+Diagnostic step:
+  1. If a "## Your past suggestions and their measured impact" section is present above, look at the recent outcomes: if the same family of suggestions keeps producing FAILED, timeout, or regressed children, drop that family and pivot. If a family produced clear improvements, refine it with a bounded rule.
+  2. If the prior reflection and the new insights keep recommending the SAME class of changes (e.g. all about "penalize fresh bins" or "prioritize tight fits"), the search is structurally locked in. Recommend a bounded non-Best-Fit perturbation around tight-fit: piecewise exponents, small rank/tie-break bias, or bounded multiplicative weights. Avoid global balance / mean-target / variance-minimization / fragmentation-profile / per-bin simulation as the main signal unless recent outcomes explicitly improved.
+  3. Keep the next hint implementation-safe: O(n) vectorized numpy scoring, no nested loops, no full packing simulation, no returning a single index, no random/stochastic perturbation, and no positive-residual primary score.
+
+Hard rule: never copy code from the past-outcomes block into your hint.

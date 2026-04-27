@@ -1,7 +1,10 @@
 numpy
-absl-py
+pandas
 scipy
+absl-py
 torch
-dotenv
-sentence-transformers 
+tensorboard
+tensorboardX
+numba
 python-dotenv
+sentence-transformers

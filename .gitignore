@@ -1,6 +1,12 @@
+# Local Python environments should not be submitted.
 venv/
+.venv/
 __pycache__/
-*.log
-knowledge_runtime.json
-.DS_Store
+*.pyc
+
+# Runtime artifacts and secrets.
 .env
+logs/
+*.log
+*.zip
+

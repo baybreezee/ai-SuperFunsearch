@@ -38,6 +38,15 @@ class Profiler:
         self._tot_sample_time = 0
         self._tot_evaluate_time = 0
         self._all_sampled_functions: Dict[int, code_manipulation.Function] = {}
+        # Monotonic write counter — every successful disk write bumps this
+        # by 1 and the resulting file name is `sample_{seq:06d}.json`. We
+        # used to name files after `program.global_sample_nums`, which is
+        # not actually unique across reflector triage / island reset code
+        # paths and silently overwrote previously-written samples — log
+        # and disk diverged, bench_heuristic picked phantom "best" rows.
+        # A dedicated profiler-owned counter makes overwrites physically
+        # impossible regardless of what global_sample_nums is reused for.
+        self._write_seq: int = 0
 
         if log_dir:
             self._writer = SummaryWriter(log_dir=log_dir)
@@ -72,21 +81,43 @@ class Profiler:
         )
 
     def _write_json(self, programs: code_manipulation.Function):
+        """Write `programs` to a *fresh*, monotonically-numbered file.
+
+        File naming is decoupled from `program.global_sample_nums` on
+        purpose — see the long comment in `__init__`. The original
+        sample order is still recorded inside the JSON payload so
+        downstream tools (summarize_run, bench_heuristic) can recover
+        the chronological view if they want to.
+        """
+        self._write_seq += 1
         sample_order = programs.global_sample_nums
         sample_order = sample_order if sample_order is not None else 0
         function_str = str(programs)
         score = programs.score
         content = {
+            'write_seq': self._write_seq,
             'sample_order': sample_order,
             'function': function_str,
             'score': score,
             'thought': programs.thought,
         }
-        path = os.path.join(self._json_dir, f'samples_{sample_order}.json')
+        path = os.path.join(
+            self._json_dir, f'sample_{self._write_seq:06d}.json')
         with open(path, 'w') as json_file:
             json.dump(content, json_file)
 
     def register_function(self, programs: code_manipulation.Function):
+        """Record a sample. Always writes to disk; only the first time a
+        given `sample_orders` is seen do we also bump counters and emit
+        the verbose stdout block — that keeps log readability identical
+        to the previous behaviour while making the disk source of truth.
+
+        The dict-based de-dup used to gate `_write_json` too, which is
+        why two programs with the same `sample_orders` (e.g. main path
+        vs. reflector triage retry) silently overwrote each other on
+        disk. We now write every call and rely on the unique
+        `_write_seq` filename to keep them apart.
+        """
         if self._max_log_nums is not None and self._num_samples >= self._max_log_nums:
             return
 
@@ -96,7 +127,11 @@ class Profiler:
             self._all_sampled_functions[sample_orders] = programs
             self._record_and_verbose(sample_orders)
             self._write_tensorboard()
-            self._write_json(programs)
+        # ALWAYS persist to disk, even on duplicate sample_orders, so
+        # the on-disk trajectory is complete and `find_best_sample_in_dir`
+        # has every candidate to compare. Filenames come from `_write_seq`,
+        # not from `sample_orders`, so collisions are impossible.
+        self._write_json(programs)
 
     def _record_and_verbose(self, sample_orders: int):
         function = self._all_sampled_functions[sample_orders]
